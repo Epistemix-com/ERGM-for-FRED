@@ -15,7 +15,7 @@ flowchart TB
 ```mermaid
 flowchart TB
   subgraph Specific Example
-    A2["Empirical Network Data"]-- "convert to edgelist and \n change empirical vertex IDs to FRED IDs" -->B2b["Import edgelist to FRED simulation"];
+    A2["Guclu et al. 2016 Contact Networks <a href='https://pubmed.ncbi.nlm.nih.gov/26978780/'>(link)</a>"]-- "convert to edgelist and \n change empirical vertex IDs to FRED IDs" -->B2b["Import edgelist to FRED simulation"];
     A2 -- modelled by -->B2a["ergm R package (from statnet family)"];
     B2a -- creates -->C2["Exponential Random \n Graph Model object"];
     D2["ergm function gof()"] -- assesses goodness-of-fit of -->C2;
