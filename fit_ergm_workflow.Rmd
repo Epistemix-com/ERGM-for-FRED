@@ -1,0 +1,361 @@
+---
+title: 'Fit ERGM on Guclu et al. (2016) Pittsburgh Contact Networks'
+subtitle: 'And Import ERGM to FRED'
+author: 'Benjamin Panny'
+date: 'Last compiled on `r Sys.Date()`'
+output: 
+  html_document:
+    toc: True
+    toc_float: True
+    toc_depth: 4
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Use the Data-Specific Preprocessing Script
+
+```{mermaid}
+a1[b]-->b1
+```
+
+```{r, echo=F}
+source(here::here('preprocess_guclu.R'))
+```
+
+## Make binary-thresholded subgraphs
+
+About the data. [Guclu et al](https://pubmed.ncbi.nlm.nih.gov/26978780/). 
+
+Threshold from 30 minutes to 3 hours in 30 minute increments
+
+```{r}
+weights <- seq(30, 180, by=30)
+subgraphs <- lapply(graphs, function(x){
+  lapply(weights, function(w){
+  get.inducedSubgraph(x, eid = which(x %e% 'weight' > w))
+  })
+  })
+```
+
+The unthresholded graphs are still "thresholded" at weights > 0, which removes isolates from the network. This is a cleaning step, since isolates are probably noisy data anyway (e.g., a student leaving their contact meter (mote) at home that day, or not attending)). Alternatively, isolates could be modelled with the isolates term in `ergm`. 
+
+```{r}
+graphs <- lapply(graphs, function(x){get.inducedSubgraph(x, eid = which(x %e% 'weight' > 0))})
+```
+
+
+##Visual Descriptions of Networks
+
+### No threhsolds
+
+```{r, cache=T}
+par(las=F) # restart plotting
+# par(mfrow=c(2,4)) # 2 by 4 plotting frame
+for (i in 1:(length(graphs))){
+  grade_numerics <- unique(graphs[[i]] %v% 'grade_numeric')
+  grade_names <- unique(graphs[[i]] %v% 'grade')
+  plot(graphs[[i]], vertex.col='grade');
+  legend('bottomleft',title = names(graphs)[i], legend = grade_names[order(grade_numerics)], fill = grade_numerics + 1, cex=0.75)
+}
+```
+
+### With Thresholds
+
+```{r, fig.width = 12, cache=T}
+for (i in 1:(length(subgraphs))){
+  sub <- subgraphs[[i]]
+  grade_numerics <- unique(sub[[1]] %v% 'grade_numeric')
+  grade_names <- unique(sub[[1]] %v% 'grade')
+  school_name <- names(subgraphs)[i]
+  par(las=F)
+  par(mfrow=c(2,3)) # 2 by 3 plotting frame
+  
+  for (j in 1:(length(sub))){
+    plot(sub[[j]], vertex.col='grade');
+    if (j == length(sub))
+      legend('bottomright',title = school_name, legend = grade_names[order(grade_numerics)], fill = grade_numerics + 1, cex=0.75)
+  }
+}
+```
+
+
+### All schools numerical summary
+
+```{r}
+library(kableExtra)
+
+net_info <- tibble(
+    school = names(graphs),
+    vertexcount = sapply(graphs, network.size),
+    edgecount = sapply(graphs, network.edgecount)
+)
+
+grade_by_school <- tibble(school = character(), grade_size = numeric(), grade = character())
+
+for (i in 1:length(graphs)){
+  grade_by_school <- rbind(grade_by_school,
+      as_tibble(graphs[[i]], unit = 'vertices') %>% 
+        count(grade, name = 'grade_size') %>% 
+        mutate(school = names(graphs)[i]))
+}
+
+grade_by_school <- grade_by_school %>% 
+  mutate(grade_numeric = grade_to_num[grade])
+
+thresh.by.edge <- tibble(school = character(), weight_thresh = numeric(), edgecount = numeric())
+weight.thresh.index <- c('1' = 30, '2' = 60, '3' = 90, '4' = 120, '5' = 150, '6' = 180)
+
+for (i in 1:length(subgraphs)){
+  sub <- subgraphs[[i]]
+  school_name <- names(subgraphs)[i]
+  
+  for (j in 1:(length(sub))){
+    thresh.by.edge <- rbind(thresh.by.edge,
+                            tibble(school = school_name, 
+                                   weight_thresh = weight.thresh.index[as.character(j)], 
+                                   vertexcount = network.size(sub[[j]]),
+                                   edgecount = network.edgecount(sub[[j]])))
+  }
+}
+
+thresh.by.edge <- thresh.by.edge %>% 
+  full_join(net_info %>% mutate(weight_thresh = 0))
+
+thresh.by.edge %>% 
+  kable() %>% 
+  kable_styling() %>% 
+  scroll_box(width = "100%", height = "300px")
+```
+
+### All schools visual summaries
+
+```{r}
+thresh.by.edge %>% 
+    ggplot(aes(x = weight_thresh, y = edgecount, color = school)) +
+    geom_line() + 
+    geom_point(aes(size = vertexcount), alpha = .5)
+```
+
+```{r, cache=T}
+grade_by_school %>% 
+  ggplot(aes(x = grade_numeric, y = grade_size, color = school)) +
+  geom_line() +
+  geom_point()
+
+
+grade_by_school %>%
+  mutate(grade = factor(grade, levels = names(grade_to_num))) %>% 
+  ggplot(aes(x = grade, y = grade_size, fill = school)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grade_by_school %>% 
+    mutate(school = factor(school, levels = c("C-ES", 'P-ES', 'C-EM1', 'C-EM2', 'P-MS1', 'P-MS2', 'C-HS', 'P-HS')),
+           grade = factor(grade, levels = rev(names(grade_to_num)))) %>% 
+    ggplot(aes(x = school, y = grade_size, fill = grade)) +
+    geom_col()
+```
+
+
+```{r}
+library(network)
+
+weight_thresholds <- c(30,60,90,120,150,180)
+
+# `graphs` is created by running (`source()`) `preprocess_guclu.R`
+binary_thresholds <- lapply(graphs, function(x){
+  lapply(weight_thresholds, function(w){
+    filtered_graph <- get.inducedSubgraph(x, eid = which(x %e% 'weight' > w))
+    filtered_graph %e% 'threshold' <- w
+    return(filtered_graph)
+  }
+  )
+}
+)
+```
+
+
+## Fit Models to all the networks
+
+```{r, warning=F}
+library(ergm)
+ergm_no_thresh <- lapply(graphs, function(g){
+  ergm(g ~ edges + nodemix('grade'))  
+}
+)
+
+ergm_thresh <- lapply(subgraphs, function(g){
+  lapply(g, function(x){
+    ergm(x ~ edges + nodemix('grade'))
+  })
+})
+```
+
+Note, the warnings set to F about 'smallest attainable values' are caused by the `nodemix` term. The `nodemix` term calculates the network statistic for each grade pairing (the number of edges that mix two particular grades). Therefore, when the count for the grade pairing is very low (especially at zero), a warning is given that the coefficient can't be determined and is fixed at -inf for modelling zero probability of the edge.
+
+### Visually compare networks with network models
+
+#### No threshold
+
+```{r, fig.height = 12, fig.width = 12, cache=T}
+for (i in 1:length(graphs)){
+  
+  # get graph and legend objects
+  g <- graphs[[i]]
+  grade_numerics <- unique(g %v% 'grade_numeric')
+  grade_names <- unique(g %v% 'grade')
+  school_name <- names(graphs)[i]
+  model_g <- simulate(ergm_no_thresh[[i]])
+  par(las=F)
+  par(mfrow=c(1,2)) # 2 by 3 plotting frame
+  
+  # plot 1 by 2 of graph then model graph
+  for (j in c(1, 2)){
+    if (j == 1){
+      plot(g, vertex.col='grade');
+      legend('bottomleft',title = paste(school_name, "(No Threshold)"), legend = grade_names[order(grade_numerics)], fill = grade_numerics + 1, cex=2)
+    }
+    else{
+      plot(model_g, vertex.col='grade')
+    }
+  }
+}
+```
+
+#### Thresholds
+
+```{r, fig.height = 12, fig.width = 12, cache=T}
+for (i in 1:length(subgraphs)){
+  sub <- subgraphs[[i]]
+  grade_numerics <- unique(sub[[1]] %v% 'grade_numeric')
+  grade_names <- unique(sub[[1]] %v% 'grade')
+  school_name <- names(subgraphs)[i]
+  model_sub <- ergm_thresh[[i]]
+  
+  for (j in 1:length(sub)){
+    par(las=F)
+    par(mfrow=c(1,2)) # 1 by 2 plotting frame
+    g <- sub[[j]]
+    model_g <- model_sub[[j]]
+    for (k in c(1, 2)){
+      if (k == 1){ # plot legend just once
+        plot(g, vertex.col='grade');
+        legend('bottomleft',title = paste0(school_name, " (Threshold = ", weights[j], ")"), legend = grade_names[order(grade_numerics)], fill = grade_numerics + 1, cex=1)
+      }
+      else {
+        plot(simulate(model_g, nsim=1), vertex.col='grade')
+      }
+    }
+  }
+}
+```
+
+## Plot GOF metrics
+
+### No Thresholds
+
+```{r, cache=T}
+# gof_no_thresh <- lapply(ergm_no_thresh, gof)
+gof_no_thresh <- readRDS('gof_no_thresh_bin.rds')
+for (i in 1:length(gof_no_thresh)){
+  par(las=F);par(mfrow=c(2,2))
+  plot(gof_no_thresh[[i]])
+  title(names(gof_no_thresh)[i])
+}
+```
+
+
+### Thresholds
+
+```{r, cache=T}
+# gof_thresh <- lapply(ergm_thresh, function(g){lapply(g, gof)})
+gof_thresh <- readRDS('gof_thresh_bin.rds')
+for (i in 1:length(gof_thresh)){
+    sub <- gof_thresh[[i]]
+    
+    for (j in 1:length(sub)){
+        par(las=F);par(mfrow=c(2,2))
+        plot(sub[[j]])
+        title(paste("School = ", names(gof_thresh)[i], "; Threshold =", weights[j]))
+    }
+}
+```
+
+
+## Conclusion: the best network model for each school
+
+## Application: Use FRED agents as node basis for populating edges, given a network model
+
+### Load Jefferson County School Data
+
+```{r}
+source("import_JC_school_info.R")
+```
+
+### Summarize School Data
+
+```{r, cache=T}
+jcsdf %>% 
+  count(school, grade_numeric) %>% 
+  mutate(school = factor(school)) %>% 
+  ggplot(aes(x = grade_numeric, y = n, color = school)) +
+  geom_line() +
+  geom_point()
+
+jcsdf %>% 
+  count(school, grade_name) %>% 
+  mutate(school = factor(school),
+         grade_name = factor(grade_name, levels = str_to_title(names(grade_to_num)))) %>%
+  ggplot(aes(x = grade_name, y = n, fill = school)) +
+  geom_col() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+jcsdf %>% 
+  count(school, grade_name) %>% 
+    mutate(school = factor(school),
+           grade_name = factor(grade_name, levels = rev(str_to_title(names(grade_to_num))))) %>% 
+    ggplot(aes(x = school, y = n, fill = grade_name)) +
+    geom_col()   +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))    
+```
+
+
+```{mermaid}
+a1[b]-->b1
+```
+
+```{r}
+# Extract the grade sizes for this synthetic school
+jcsdf <- jcsdf %>%
+  filter(!is.na(grade_numeric))
+
+fred_schools <- jcsdf %>% distinct(school) %>% pull()
+
+for (i in fred_schools){
+  school_df <- jcsdf %>%
+    filter(school == i)
+  
+  grade_sizes <- jcsdf %>%
+    count(grade_numeric)
+  
+
+}
+
+# Create an empty network with the desired number of nodes for each grade
+synthetic_network <- network.initialize(sum(grade_sizes$n), directed = FALSE)
+synthetic_network %v% "grade_numeric" <- school_df$grade_numeric
+synthetic_network %v% "vertex.names" <- school_df$person
+
+# Simulate a synthetic school network from the fitted model
+# simulated_networks[[as.character(synthetic_school)]] <- simulate(fit, nsim = 1, basis = synthetic_network)
+# record_fitted_networks[[as.character(synthetic_school)]] <- closest_real_school
+```
+
+
+## Network Generation on FRED Agents
+
+See the Python Notebook `fred_network_generation.ipynb`
+
+
