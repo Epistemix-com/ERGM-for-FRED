@@ -1,0 +1,11 @@
+.Rproj.user
+*.png
+*.graphml
+*.ncol
+*.net
+*.edgelist
+ergm.components*
+FRED-network-generation/detail*
+FRED-network-generation/fred_fn*
+scratch*
+import*
