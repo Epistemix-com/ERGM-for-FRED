@@ -9,3 +9,6 @@ FRED-network-generation/detail*
 FRED-network-generation/fred_fn*
 scratch*
 import*
+fred_fn*
+.R*
+

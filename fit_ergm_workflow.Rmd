@@ -16,11 +16,8 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ## Use the Data-Specific Preprocessing Script
 
-```{mermaid}
-a1[b]-->b1
-```
 
-```{r, echo=F}
+```{r, echo=F, message=F, warning=F}
 source(here::here('preprocess_guclu.R'))
 ```
 
@@ -34,9 +31,9 @@ Threshold from 30 minutes to 3 hours in 30 minute increments
 weights <- seq(30, 180, by=30)
 subgraphs <- lapply(graphs, function(x){
   lapply(weights, function(w){
-  get.inducedSubgraph(x, eid = which(x %e% 'weight' > w))
+    get.inducedSubgraph(x, eid = which(x %e% 'weight' > w))
   })
-  })
+})
 ```
 
 The unthresholded graphs are still "thresholded" at weights > 0, which removes isolates from the network. This is a cleaning step, since isolates are probably noisy data anyway (e.g., a student leaving their contact meter (mote) at home that day, or not attending)). Alternatively, isolates could be modelled with the isolates term in `ergm`. 
@@ -46,7 +43,7 @@ graphs <- lapply(graphs, function(x){get.inducedSubgraph(x, eid = which(x %e% 'w
 ```
 
 
-##Visual Descriptions of Networks
+## Visual Descriptions of Networks
 
 ### No threhsolds
 
@@ -63,7 +60,7 @@ for (i in 1:(length(graphs))){
 
 ### With Thresholds
 
-```{r, fig.width = 12, cache=T}
+```{r, fig.height = 12, fig.width = 12, cache=T}
 for (i in 1:(length(subgraphs))){
   sub <- subgraphs[[i]]
   grade_numerics <- unique(sub[[1]] %v% 'grade_numeric')
@@ -87,23 +84,25 @@ for (i in 1:(length(subgraphs))){
 library(kableExtra)
 
 net_info <- tibble(
-    school = names(graphs),
-    vertexcount = sapply(graphs, network.size),
-    edgecount = sapply(graphs, network.edgecount)
+  school = names(graphs),
+  vertexcount = sapply(graphs, network.size),
+  edgecount = sapply(graphs, network.edgecount)
 )
 
 grade_by_school <- tibble(school = character(), grade_size = numeric(), grade = character())
 
 for (i in 1:length(graphs)){
   grade_by_school <- rbind(grade_by_school,
-      as_tibble(graphs[[i]], unit = 'vertices') %>% 
-        count(grade, name = 'grade_size') %>% 
-        mutate(school = names(graphs)[i]))
+                           as_tibble(graphs[[i]], unit = 'vertices') %>% 
+                             count(grade, name = 'grade_size') %>% 
+                             mutate(school = names(graphs)[i]))
 }
 
 grade_by_school <- grade_by_school %>% 
   mutate(grade_numeric = grade_to_num[grade])
+```
 
+```{r}
 thresh.by.edge <- tibble(school = character(), weight_thresh = numeric(), edgecount = numeric())
 weight.thresh.index <- c('1' = 30, '2' = 60, '3' = 90, '4' = 120, '5' = 150, '6' = 180)
 
@@ -133,9 +132,9 @@ thresh.by.edge %>%
 
 ```{r}
 thresh.by.edge %>% 
-    ggplot(aes(x = weight_thresh, y = edgecount, color = school)) +
-    geom_line() + 
-    geom_point(aes(size = vertexcount), alpha = .5)
+  ggplot(aes(x = weight_thresh, y = edgecount, color = school)) +
+  geom_line() + 
+  geom_point(aes(size = vertexcount), alpha = .5)
 ```
 
 ```{r, cache=T}
@@ -152,10 +151,10 @@ grade_by_school %>%
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
 grade_by_school %>% 
-    mutate(school = factor(school, levels = c("C-ES", 'P-ES', 'C-EM1', 'C-EM2', 'P-MS1', 'P-MS2', 'C-HS', 'P-HS')),
-           grade = factor(grade, levels = rev(names(grade_to_num)))) %>% 
-    ggplot(aes(x = school, y = grade_size, fill = grade)) +
-    geom_col()
+  mutate(school = factor(school, levels = c("C-ES", 'P-ES', 'C-EM1', 'C-EM2', 'P-MS1', 'P-MS2', 'C-HS', 'P-HS')),
+         grade = factor(grade, levels = rev(names(grade_to_num)))) %>% 
+  ggplot(aes(x = school, y = grade_size, fill = grade)) +
+  geom_col()
 ```
 
 
@@ -179,6 +178,8 @@ binary_thresholds <- lapply(graphs, function(x){
 
 ## Fit Models to all the networks
 
+These are dyad-independent models, so they can be fit with maximum pseudolikelihood estimation (MPLE). One set of terms that could be interesting to add could be something that combines both nodemixing as well as the relationship between mixing and degree. For instance, are those with higher degrees in each grade associated with higher between-group edges? Are more edges expected between nodes within-group that have higher degree?
+
 ```{r, warning=F}
 library(ergm)
 ergm_no_thresh <- lapply(graphs, function(g){
@@ -196,6 +197,8 @@ ergm_thresh <- lapply(subgraphs, function(g){
 Note, the warnings set to F about 'smallest attainable values' are caused by the `nodemix` term. The `nodemix` term calculates the network statistic for each grade pairing (the number of edges that mix two particular grades). Therefore, when the count for the grade pairing is very low (especially at zero), a warning is given that the coefficient can't be determined and is fixed at -inf for modelling zero probability of the edge.
 
 ### Visually compare networks with network models
+
+The following plots compare the empirical network (left) with a generated network (right) from the model of the empirical network
 
 #### No threshold
 
@@ -273,61 +276,193 @@ for (i in 1:length(gof_no_thresh)){
 # gof_thresh <- lapply(ergm_thresh, function(g){lapply(g, gof)})
 gof_thresh <- readRDS('gof_thresh_bin.rds')
 for (i in 1:length(gof_thresh)){
-    sub <- gof_thresh[[i]]
-    
-    for (j in 1:length(sub)){
-        par(las=F);par(mfrow=c(2,2))
-        plot(sub[[j]])
-        title(paste("School = ", names(gof_thresh)[i], "; Threshold =", weights[j]))
+  sub <- gof_thresh[[i]]
+  
+  for (j in 1:length(sub)){
+    par(las=F);par(mfrow=c(2,2))
+    plot(sub[[j]])
+    title(paste("School = ", names(gof_thresh)[i], "; Threshold =", weights[j]))
+  }
+}
+```
+
+
+## Table GOF metrics
+
+There is *potentially* some bias in these tabling methods, where geodesic distance may be measured for distances up to one or two hundred, but the distances present in the empirical dataset are maxed out at 3. This code will still include the 197 that are 0, since the model would have to get all these zeros right.
+
+### No thresholds
+
+My data model here is there are pvals for model, espar, dist, deg
+For no thresh, just cycle through the names in the list
+one column for model name, for model stat ratio, for espart ratio, for dist ratio, for deg ratio
+
+```{r}
+pval_cols <- paste(c('pval'), c('model', 'espart', 'dist', 'deg'), sep='.')
+p_ratio_no_thresh <- tibble(name = character(), weight = character(), pval.model = character(), pval.espart = character(), pval.dist = character(), pval.deg = character(), pval.mean = character())
+for (name in names(gof_no_thresh)){
+  goodfit <- gof_no_thresh[[name]]
+  mean_pval <- c(name = name, weight = 0)
+  mean_pval_ind <- c()
+  for (val in pval_cols){
+    mean_pval_ind <- c(mean_pval_ind, goodfit[[val]][,'MC p-value'])
+    mean_pval[val] <- goodfit[[val]][,'MC p-value'] %>% mean()
+  }
+  mean_pval['pval.mean'] <- mean_pval_ind %>% mean()
+  p_ratio_no_thresh <- bind_rows(p_ratio_no_thresh, mean_pval)
+}
+
+p_ratio_no_thresh <- p_ratio_no_thresh %>% 
+  mutate(across(all_of(c('weight', pval_cols, 'pval.mean')), as.numeric))
+```
+
+
+### Thresholds
+
+```{r}
+pval_cols <- paste(c('pval'), c('model', 'espart', 'dist', 'deg'), sep='.')
+p_ratio_thresh <- tibble(name = character(), weight = character(), pval.model = character(), pval.espart = character(), pval.dist = character(), pval.deg = character(), pval.mean = character())
+for (name in names(gof_thresh)){
+  goodfit <- gof_thresh[[name]]
+  for (i in 1:length(weights)){
+    mean_pval <- c(name = name, weight = weights[i])
+    mean_pval_ind <- c()
+    goodfit_w <- goodfit[[i]]
+    for (val in pval_cols){
+      mean_pval_ind <- c(mean_pval_ind, goodfit_w[[val]][,'MC p-value'])
+      mean_pval[val] <- goodfit_w[[val]][,'MC p-value'] %>% mean()
+    }
+    mean_pval['pval.mean'] <- mean_pval_ind %>% mean()
+    p_ratio_thresh <- bind_rows(p_ratio_thresh, mean_pval)
+  }
+}
+
+p_ratio_thresh <- p_ratio_thresh %>% 
+  mutate(across(all_of(c('weight', pval_cols, 'pval.mean')), as.numeric))
+```
+
+## Conclusion: the best network model for each school
+
+```{r}
+# higher p-values are better for fit, want no significant differences
+p_ratios <- p_ratio_thresh %>% 
+  bind_rows(p_ratio_no_thresh) %>% 
+  mutate(pval.means.mean = (pval.model + pval.espart + pval.dist + pval.deg) / 4)
+
+# mean of pval type-specific means
+best_mods_aggmeans <- p_ratios %>% 
+  arrange(name, desc(pval.means.mean)) %>% 
+  slice(1, .by = name)
+
+# mean of all p-values across pval types
+best_mods_allmeans <- p_ratios %>% 
+  arrange(name, desc(pval.mean)) %>% 
+  slice(1, .by = name)
+```
+
+## Application: Use FRED agents as node basis for populating edges, given a network model
+
+### Preprocess Jefferson County Student Data
+
+Obtain {county}_students.csv data 
+
+```{r}
+students <- read_csv(here::here('Jefferson_County_PA_students.csv'))
+```
+
+Some functions for assigning numeric grades and grade names to FRED agents. The functions use the maximum age in a FRED grade to assign the numerical grade.
+
+```{r}
+# Define the grade_numeric function
+fred_grade_to_num <- function(x) {
+    if (x == 5) {
+        return(0)
+    } else if (x >= 6 && x <= 18) {
+        if (x == 18) {
+            return(x - 6)
+        } else {
+            return(x - 5)
+        }
+    } else {
+        return(NA)
+    }
+}
+
+# Define the grade_name function
+grade_num_to_name <- function(x) {
+    if (is.na(x))
+        x <- 999
+    if (x == 0) {
+        return("Kindergarten")
+    } else if (x >= 1 && x <= 12) {
+        if (x == 1) {
+            return("1st grade")
+        } else if (x == 2) {
+            return("2nd grade")
+        } else if (x == 3) {
+            return("3rd grade")
+        } else {
+            return(paste0(x, "th grade"))
+        }
+    } else {
+        return(NA)
     }
 }
 ```
 
 
-## Conclusion: the best network model for each school
-
-## Application: Use FRED agents as node basis for populating edges, given a network model
-
-### Load Jefferson County School Data
-
 ```{r}
-source("import_JC_school_info.R")
+students <- students %>%
+  group_by(Grade) %>%
+  mutate(grade_numeric = fred_grade_to_num(max(age))) %>%
+  ungroup() %>% 
+  rowwise() %>% 
+  mutate(grade_name = grade_num_to_name(grade_numeric)) %>% 
+  ungroup()
 ```
 
-### Summarize School Data
+### Summarize FRED School Data
+
+```{r}
+grade_by_school_fred <- students %>% 
+  count(School, grade_name, grade_numeric) %>% 
+  rename(school = School, grade = grade_name, grade_size = n)
+
+grade_by_school_fred %>% 
+    mutate(school = factor(school),
+           grade = factor(grade, levels = rev(names(grade_to_num)))) %>% 
+    ggplot(aes(x = school, y = grade_size, fill = grade)) +
+    geom_col() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
 
 ```{r, cache=T}
-jcsdf %>% 
-  count(school, grade_numeric) %>% 
-  mutate(school = factor(school)) %>% 
-  ggplot(aes(x = grade_numeric, y = n, color = school)) +
-  geom_line() +
-  geom_point()
+grade_by_school_fred %>% 
+    mutate(school = factor(school)) %>%
+    ggplot(aes(x = grade_numeric, y = grade_size, color = school)) +
+    geom_line() +
+    geom_point()
 
-jcsdf %>% 
-  count(school, grade_name) %>% 
-  mutate(school = factor(school),
-         grade_name = factor(grade_name, levels = str_to_title(names(grade_to_num)))) %>%
-  ggplot(aes(x = grade_name, y = n, fill = school)) +
-  geom_col() +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))
-
-jcsdf %>% 
-  count(school, grade_name) %>% 
+grade_by_school_fred %>% 
     mutate(school = factor(school),
-           grade_name = factor(grade_name, levels = rev(str_to_title(names(grade_to_num))))) %>% 
-    ggplot(aes(x = school, y = n, fill = grade_name)) +
+           grade = factor(grade, levels = names(grade_to_num))) %>%
+    ggplot(aes(x = grade, y = grade_size, fill = school)) +
+    geom_col() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+grade_by_school_fred %>%
+    mutate(school = factor(school),
+           grade = factor(grade, levels = rev(names(grade_to_num)))) %>%
+    ggplot(aes(x = school, y = grade_size, fill = grade)) +
     geom_col()   +
-  theme(axis.text.x = element_text(angle = 45, hjust = 1))    
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
 
-```{mermaid}
-a1[b]-->b1
-```
 
 ```{r}
-# Extract the grade sizes for this synthetic school
+# Remove students without a grade
 jcsdf <- jcsdf %>%
   filter(!is.na(grade_numeric))
 
@@ -336,10 +471,10 @@ fred_schools <- jcsdf %>% distinct(school) %>% pull()
 for (i in fred_schools){
   school_df <- jcsdf %>%
     filter(school == i)
-  
+
   grade_sizes <- jcsdf %>%
     count(grade_numeric)
-  
+
 
 }
 
@@ -349,8 +484,8 @@ synthetic_network %v% "grade_numeric" <- school_df$grade_numeric
 synthetic_network %v% "vertex.names" <- school_df$person
 
 # Simulate a synthetic school network from the fitted model
-# simulated_networks[[as.character(synthetic_school)]] <- simulate(fit, nsim = 1, basis = synthetic_network)
-# record_fitted_networks[[as.character(synthetic_school)]] <- closest_real_school
+simulated_networks[[as.character(synthetic_school)]] <- simulate(fit, nsim = 1, basis = synthetic_network)
+record_fitted_networks[[as.character(synthetic_school)]] <- closest_real_school
 ```
 
 
